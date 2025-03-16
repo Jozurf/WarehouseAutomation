@@ -1,7 +1,9 @@
 import pygame
 import sys
-import heapq
+import random
+import argparse
 from robot import Robot
+from OneRobotAStarAgent import OneRobotAStarAgent
 
 # Initialize Pygame
 pygame.init()
@@ -19,78 +21,85 @@ BLUE = (100, 100, 255)
 GREEN = (0, 255, 0)
 RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
+ORANGE = (255, 165, 0)  # Robot color when carrying package
 PURPLE = (128, 0, 128)
 
 # Grid settings
 ROWS, COLS = 20, 20
 CELL_SIZE = min(WIDTH // COLS, HEIGHT // ROWS)
 
-# Define environment grid
-# 0: Empty, 1: Wall, 4: Pickup, 5: Dropoff
-grid = [[0 for _ in range(COLS)] for _ in range(ROWS)]
+# Global variables
+grid = None
+pickup_locations = []
+dropoff_locations = []
 
-# Create boundary walls
-for i in range(ROWS):
-    grid[i][0] = 1
-    grid[i][COLS - 1] = 1
-for j in range(COLS):
-    grid[0][j] = 1
-    grid[ROWS - 1][j] = 1
-
-# Add inner walls
-for i in range(3, 17):
-    grid[i][5] = 1
-    grid[i][14] = 1
-
-grid[10][5] = 0  # Create a small passage in the left wall
-grid[10][14] = 0  # Create a small passage in the right wall
-
-# Define pickup and dropoff zones
-PICKUP = (3, 3)
-DROPOFF = (16, 16)
-grid[PICKUP[0]][PICKUP[1]] = 4
-grid[DROPOFF[0]][DROPOFF[1]] = 5
-
-# A* Pathfinding Algorithm
-def astar_search(start, goal, grid):
-    def heuristic(a, b):
-        return abs(a[0] - b[0]) + abs(a[1] - b[1])  # Manhattan distance
-
-    open_set = []
-    heapq.heappush(open_set, (0, start))
-    came_from = {}
-    g_score = {}
-    g_score[start] = 0
-    f_score = {}
-    f_score[start] = heuristic(start, goal)
-
-    while open_set:
-        _, current = heapq.heappop(open_set)
-        
-        if current == goal:
-            # Reconstruct path
-            path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
-            path.append(start)  # Add the start position
-            return path[::-1]  # Return reversed path
-        
-        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:  # Down, Right, Up, Left
-            neighbor = (current[0] + dx, current[1] + dy)
-            
-            if 0 <= neighbor[0] < ROWS and 0 <= neighbor[1] < COLS and grid[neighbor[0]][neighbor[1]] != 1:
-                tentative_g_score = g_score[current] + 1
-                
-                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-                    
-                    if all(item[1] != neighbor for item in open_set):
-                        heapq.heappush(open_set, (f_score[neighbor], neighbor))
+def generate_random_grid(num_pickups=1, num_dropoffs=1):
+    # Initialize empty grid
+    new_grid = [[0 for _ in range(COLS)] for _ in range(ROWS)]
     
-    return []  # No path found
+    # Create boundary walls
+    for i in range(ROWS):
+        new_grid[i][0] = 1
+        new_grid[i][COLS - 1] = 1
+    for j in range(COLS):
+        new_grid[0][j] = 1
+        new_grid[ROWS - 1][j] = 1
+    
+    # Add random internal walls (avoiding corners)
+    wall_chance = 0.15  # Probability of a cell being a wall
+    for i in range(2, ROWS-2):
+        for j in range(2, COLS-2):
+            if random.random() < wall_chance:
+                new_grid[i][j] = 1
+    
+    # Create paths through the grid
+    # Horizontal corridors at 1/4, 1/2, and 3/4 of grid height
+    for j in range(1, COLS-1):
+        new_grid[ROWS//4][j] = 0
+        new_grid[ROWS//2][j] = 0
+        new_grid[3*ROWS//4][j] = 0
+    
+    # Vertical corridors at 1/4, 1/2, and 3/4 of grid width
+    for i in range(1, ROWS-1):
+        new_grid[i][COLS//4] = 0
+        new_grid[i][COLS//2] = 0
+        new_grid[i][3*COLS//4] = 0
+    
+    # Generate pickup and dropoff locations
+    pickups = []
+    dropoffs = []
+    
+    for _ in range(num_pickups):
+        while True:
+            row = random.randint(2, ROWS-3)
+            col = random.randint(2, COLS-3)
+            
+            # Ensure it's not on a wall and not already a pickup or dropoff
+            if new_grid[row][col] == 0:
+                new_grid[row][col] = 4  # Mark as pickup
+                pickups.append((row, col))
+                break
+    
+    for _ in range(num_dropoffs):
+        while True:
+            row = random.randint(2, ROWS-3)
+            col = random.randint(2, COLS-3)
+            
+            # Ensure it's not on a wall and not already a pickup or dropoff
+            if new_grid[row][col] == 0:
+                new_grid[row][col] = 5  # Mark as dropoff
+                dropoffs.append((row, col))
+                break
+    
+    return new_grid, pickups, dropoffs
+
+def find_valid_start_position(search_grid):
+    """Find a valid starting position that's not a wall, pickup, or dropoff."""
+    while True:
+        row = random.randint(1, ROWS-2)
+        col = random.randint(1, COLS-2)
+        if search_grid[row][col] == 0:  # Empty space
+            return (row, col)
 
 def draw_grid():
     for i in range(ROWS):
@@ -113,20 +122,31 @@ def draw_path(path):
             rect = pygame.Rect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE)
             pygame.draw.rect(win, BLUE, rect, 2)
 
-def main():
-    # Initialize robot at starting position
-    robot_pos = (1, 1)  # Start position
+def run_simulation(num_pickups, num_dropoffs):
+    global grid, pickup_locations, dropoff_locations
+    
+    # Find a valid starting position
+    robot_pos = find_valid_start_position(grid)
     robot = Robot(robot_pos[1], robot_pos[0], grid)
     
-    # Create paths
-    to_pickup_path = astar_search(robot_pos, PICKUP, grid)
-    to_dropoff_path = []
+    # Create A* agent
+    agent = OneRobotAStarAgent(grid, robot_pos, pickup_locations[0], dropoff_locations[0])
+    
+    # Plan the path
+    if not agent.plan_path():
+        print("Could not plan a valid path! Regenerating grid...")
+        return True  # Restart the simulation
+    
+    # Override robot's getColor method to use our colors
+    def custom_get_color(self):
+        if self.isHoldingPackage:
+            return ORANGE  # Different color when carrying package
+        return YELLOW
+    
+    Robot.getColor = custom_get_color
     
     # Game state
     clock = pygame.time.Clock()
-    path_index = 0
-    current_path = to_pickup_path
-    has_pickup = False
     
     # Font for status messages
     font = pygame.font.SysFont(None, 36)
@@ -137,43 +157,33 @@ def main():
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:  # Press R to regenerate the grid
+                    return True  # Restart the simulation
         
-        # Move robot along the current path
-        if path_index < len(current_path):
-            next_pos = current_path[path_index]
-            robot.x = next_pos[1]
-            robot.y = next_pos[0]
-            robot.path.append((robot.x, robot.y))
-            path_index += 1
-            
-            # Check if robot is at pickup location
-            if not has_pickup and (robot.y, robot.x) == PICKUP:
-                robot.isHoldingPackage = True
-                robot.color = robot.getColor()  # Update color based on package status
-                has_pickup = True
-                print("Robot picked up the package!")
+        # Move robot along the planned path
+        if not agent.has_completed_path():
+            next_pos = agent.get_next_move()
+            if next_pos:
+                robot.y = next_pos[0]
+                robot.x = next_pos[1]
+                robot.path.append((robot.x, robot.y))
                 
-                # Calculate path to dropoff
-                current_path = astar_search(PICKUP, DROPOFF, grid)
-                path_index = 0
-                
-            # Check if robot is at dropoff location with package
-            elif robot.isHoldingPackage and (robot.y, robot.x) == DROPOFF:
-                robot.isHoldingPackage = False
-                robot.color = robot.getColor()  # Update color based on package status
-                print("Package delivered successfully!")
+                # Update robot's package status
+                robot.isHoldingPackage = agent.is_holding_package
         
         # Draw everything
         win.fill(WHITE)
         draw_grid()
         
         # Draw the current path
-        draw_path(current_path)
+        draw_path(agent.current_path)
         
         # Draw robot
         robot_rect = pygame.Rect(robot.x * CELL_SIZE, robot.y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-        pygame.draw.rect(win, robot.color, robot_rect)
+        pygame.draw.rect(win, robot.getColor(), robot_rect)
         
         # Draw robot's path
         for x, y in robot.path:
@@ -185,7 +195,7 @@ def main():
         status_text = "Status: "
         if robot.isHoldingPackage:
             status_text += "Carrying package to dropoff"
-        elif has_pickup:
+        elif agent.has_completed_path():
             status_text += "Package delivered"
         else:
             status_text += "Moving to pickup"
@@ -193,10 +203,40 @@ def main():
         status_surface = font.render(status_text, True, BLACK)
         win.blit(status_surface, (10, HEIGHT - 40))
         
+        # Display instructions
+        instructions = "Press R to regenerate grid"
+        instr_surface = font.render(instructions, True, BLACK)
+        win.blit(instr_surface, (WIDTH - 300, HEIGHT - 40))
+        
         pygame.display.update()
+        
+        # Check if simulation is complete
+        if agent.has_completed_path():
+            pygame.time.delay(2000)  # Wait 2 seconds before allowing restart
     
-    pygame.quit()
-    sys.exit()
+    return False
 
-if __name__ == "__main__":
+def main():
+    global grid, pickup_locations, dropoff_locations
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Warehouse A* Navigation Simulation')
+    parser.add_argument('--agent', type=str, default='onerobotastar', help='Agent type: simple or onerobotastar')
+    parser.add_argument('--pickups', type=int, default=1, help='Number of pickup locations')
+    parser.add_argument('--dropoffs', type=int, default=1, help='Number of dropoff locations')
+    args = parser.parse_args()
+    
+    # Check if we're using the OneRobotA* agent
+    if args.agent.lower() != 'onerobotastar':
+        print("Please use --agent onerobotastar to use the A* agent")
+        return
+    
+    # Initialize grid and pickup/dropoff points
+    grid, pickup_locations, dropoff_locations = generate_random_grid(args.pickups, args.dropoffs)
+    
+    # Run the simulation loop
+    while run_simulation(args.pickups, args.dropoffs):
+        grid, pickup_locations, dropoff_locations = generate_random_grid(args.pickups, args.dropoffs)
+
+if __name__ == '__main__':
     main()
