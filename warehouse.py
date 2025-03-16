@@ -45,8 +45,12 @@ for j in range(1, COLS - 1):
     grid[10][j] = 2
 
 # Set pickup and dropoff zones
-grid[1][1] = 4
-grid[ROWS - 2][COLS - 2] = 5
+pickup_zone = [(1, 1)]
+for i, j in pickup_zone:
+    grid[i][j] = 4
+dropoff_zone = [(ROWS - 2, COLS - 2)]
+for i, j in dropoff_zone:
+    grid[i][j] = 5
 
 # Instantiate a robot at the pickup area
 robot = Robot(1, 1, grid)
@@ -63,6 +67,12 @@ while running:
 
     # Update robot movement using the logic from robot.py
     robot.move()
+
+    # Check if the robot is holding a package
+    if (robot.x, robot.y) in pickup_zone:
+        robot.isHoldingPackage = True
+    elif (robot.x, robot.y) in dropoff_zone:
+        robot.isHoldingPackage = False
 
     # Draw the grid and environment
     win.fill(WHITE)

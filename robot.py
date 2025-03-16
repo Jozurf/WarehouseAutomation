@@ -5,7 +5,8 @@ class Robot:
         self.x = x
         self.y = y
         self.grid = grid  # Reference to the environment grid
-        self.color = color
+        self.isHoldingPackage = False
+        self.color = self.getColor()
         self.path = [(x, y)]  # Track the path for evaluation
 
     def get_valid_moves(self):
@@ -27,3 +28,9 @@ class Robot:
             self.x += dx
             self.y += dy
             self.path.append((self.x, self.y))
+    
+    def getColor(self):
+        """Returns the color of the robot."""
+        if self.isHoldingPackage:
+            return (0, 200, 0)
+        return (200, 200, 0)
