@@ -12,7 +12,9 @@ class MultiRobotAgent:
             "position": start_pos,
             "path": [],
             "done": False,
-            "holding": False
+            "holding": False,
+            "assigned_pickups": [],
+            "visited": set()
         } for _ in range(num_robots)]
         self.paths_planned = False
         self.reservation_table = {}  # timestep -> set of reserved positions
@@ -23,7 +25,9 @@ class MultiRobotAgent:
         assignments = [[] for _ in range(self.num_robots)]
         i = 0
         while pickup_tasks:
-            assignments[i % self.num_robots].append(pickup_tasks.pop())
+            assigned = pickup_tasks.pop()
+            assignments[i % self.num_robots].append(assigned)
+            self.robots[i % self.num_robots]["assigned_pickups"].append(assigned)
             i += 1
         return assignments
 
@@ -100,9 +104,12 @@ class MultiRobotAgent:
             robot["position"] = next_pos
 
             r, c = next_pos
-            if self.grid[r][c] == 4:  # Pickup
+
+            # If robot is standing on an assigned pickup it hasn’t visited yet
+            if (r, c) in robot["assigned_pickups"] and (r, c) not in robot["visited"]:
                 robot["holding"] = True
-            elif self.grid[r][c] == 5:  # Dropoff
+                robot["visited"].add((r, c))
+            elif self.grid[r][c] == 5 and robot["holding"]:
                 robot["holding"] = False
 
             if not robot["path"]:
