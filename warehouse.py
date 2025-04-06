@@ -29,6 +29,20 @@ ORANGE = (255, 165, 0)
 PURPLE = (128, 0, 128)
 CYAN = (0, 255, 255)
 
+# Robot colors - unique for each robot (no green)
+ROBOT_COLORS = [
+    (255, 100, 100),  # Light red
+    (100, 100, 255),  # Light blue
+    (255, 255, 100),  # Yellow
+    (255, 100, 255),  # Pink
+    (100, 255, 255),  # Cyan
+    (200, 150, 100),  # Brown
+    (150, 100, 200),  # Purple
+    (200, 100, 150),  # Rose
+    (255, 165, 0),    # Orange
+    (128, 0, 128),    # Deep Purple
+]
+
 # Grid settings
 ROWS, COLS = 20, 20
 CELL_SIZE = min(WIDTH // COLS, HEIGHT // ROWS)
@@ -199,14 +213,8 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
             return True
         robots = [Robot(robot_pos[1], robot_pos[0], grid)]
 
-    def custom_get_color(self):
-        if self.isHoldingPackage:
-            return ORANGE
-        return YELLOW
-    Robot.getColor = custom_get_color
-
     clock = pygame.time.Clock()
-    font = pygame.font.SysFont(None, 36)
+    font = pygame.font.SysFont(None, 24)  # Font for package number
 
     running = True
     while running:
@@ -238,18 +246,28 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
         for i, robot in enumerate(robots):
             robot_rect = pygame.Rect(robot.x * CELL_SIZE, robot.y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-
-            if agent_type == "multi":
-                color = ORANGE if agent.robots[i].holding else YELLOW
-            else:
-                color = robot.getColor()
-
+            
+            # Use unique color for each robot
+            color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
             pygame.draw.rect(win, color, robot_rect)
-
+            
+            # Draw path
             for x, y in robot.path:
                 if (x, y) != (robot.x, robot.y):
                     path_rect = pygame.Rect(x * CELL_SIZE + CELL_SIZE // 3, y * CELL_SIZE + CELL_SIZE // 3, CELL_SIZE // 3, CELL_SIZE // 3)
                     pygame.draw.rect(win, PURPLE, path_rect)
+            
+            # Draw "1" if holding package
+            if agent_type == "multi":
+                if agent.robots[i].holding:
+                    text = font.render("1", True, BLACK)
+                    text_rect = text.get_rect(center=(robot.x * CELL_SIZE + CELL_SIZE // 2, robot.y * CELL_SIZE + CELL_SIZE // 2))
+                    win.blit(text, text_rect)
+            else:
+                if robot.isHoldingPackage:
+                    text = font.render("1", True, BLACK)
+                    text_rect = text.get_rect(center=(robot.x * CELL_SIZE + CELL_SIZE // 2, robot.y * CELL_SIZE + CELL_SIZE // 2))
+                    win.blit(text, text_rect)
 
         status_text = f"Mode: {agent_type.upper()} | Robots: {len(robots)}"
         status_surface = font.render(status_text, True, BLACK)
