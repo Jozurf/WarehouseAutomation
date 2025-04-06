@@ -1,6 +1,10 @@
 import random
+from q_learning import QLearningAgent
+import os
 
 class Robot:
+    _weight_file_index = 0  # Class variable to track which weight file to use
+    
     def __init__(self, x, y, grid, color=(255, 255, 0)):
         self.x = x
         self.y = y
@@ -8,10 +12,18 @@ class Robot:
         self.isHoldingPackage = False
         self.color = self.getColor()
         self.path = [(x, y)]  # Track the path for evaluation
+        self.q_agent = QLearningAgent()
+        
+        # Try to load weights from q_learning_weights.json
+        if os.path.exists('q_learning_weights.json'):
+            self.q_agent.load('q_learning_weights.json')
+            
+        self.last_state = None
+        self.last_action = None
 
     def get_valid_moves(self):
         """Returns a list of valid moves based on the environment grid."""
-        possible_moves = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # Down, Right, Up, Left
+        possible_moves = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # Up, Right, Down, Left
         valid_moves = []
         for dx, dy in possible_moves:
             new_x, new_y = self.x + dx, self.y + dy
@@ -21,16 +33,48 @@ class Robot:
         return valid_moves
 
     def move(self):
-        """Replace this logic with Q-learning."""
+        """Use Q-learning to make movement decisions."""
         valid_moves = self.get_valid_moves()
-        if valid_moves:
-            dx, dy = random.choice(valid_moves)  # Temporary: Replace with Q-learning decision
-            self.x += dx
-            self.y += dy
+        if not valid_moves:
+            return
+            
+        current_state = self.q_agent.get_state(self, self.grid)
+        action = self.q_agent.get_action(current_state, valid_moves)
+        
+        if action:
+            dx, dy = action
+            new_x, new_y = self.x + dx, self.y + dy
+            
+            # Calculate reward based on collision avoidance
+            reward = 0
+            # Negative reward for getting too close to obstacles
+            adjacent_obstacles = sum(1 for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]
+                                  if 0 <= new_x + dx < len(self.grid[0]) and 
+                                     0 <= new_y + dy < len(self.grid) and
+                                     self.grid[new_y + dy][new_x + dx] in [1, 2])  # Check for both walls (1) and other robots (2)
+            reward -= adjacent_obstacles * 0.5
+            
+            # Positive reward for successful movement
+            reward += 0.1
+            
+            # Update position
+            self.x = new_x
+            self.y = new_y
             self.path.append((self.x, self.y))
+            
+            # Update Q-values if we're training
+            if self.last_state is not None and self.last_action is not None:
+                self.q_agent.update(self.last_state, self.last_action, reward, current_state)
+            
+            self.last_state = current_state
+            self.last_action = action
     
     def getColor(self):
         """Returns the color of the robot."""
         if self.isHoldingPackage:
             return (0, 200, 0)
         return (200, 200, 0)
+        
+    def save_q_learning_weights(self):
+        """Save the Q-learning weights to file."""
+        self.q_agent.save('q_learning_weights.json')
