@@ -35,7 +35,7 @@ ROBOT_COLORS = [
     (100, 100, 255),  # Light blue
     (255, 255, 100),  # Yellow
     (255, 100, 255),  # Pink
-    (100, 255, 255),  # Cyan
+    (100, 70, 70),    # Dark red
     (200, 150, 100),  # Brown
     (150, 100, 200),  # Purple
     (200, 100, 150),  # Rose
@@ -215,7 +215,7 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 24)  # Font for package number
-
+    
     running = True
     while running:
         clock.tick(5)
@@ -229,6 +229,13 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
         win.fill(WHITE)
         draw_grid()
+
+        # Create translucent surface for path blocks
+        translucent_surface = pygame.Surface((CELL_SIZE // 3, CELL_SIZE // 3), pygame.SRCALPHA)
+        translucent_surface.fill((128, 0, 128, int(0.2 * 255)))  # RGBA
+
+        # Track which path cells were already drawn with transparency
+        drawn_translucents = set()
 
         if agent_type == 'multi':
             moves = agent.get_next_moves()
@@ -246,17 +253,21 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
         for i, robot in enumerate(robots):
             robot_rect = pygame.Rect(robot.x * CELL_SIZE, robot.y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-            
+
             # Use unique color for each robot
             color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
             pygame.draw.rect(win, color, robot_rect)
-            
-            # Draw path
+
+            # Draw path with transparency, only once per cell
             for x, y in robot.path:
                 if (x, y) != (robot.x, robot.y):
-                    path_rect = pygame.Rect(x * CELL_SIZE + CELL_SIZE // 3, y * CELL_SIZE + CELL_SIZE // 3, CELL_SIZE // 3, CELL_SIZE // 3)
-                    pygame.draw.rect(win, PURPLE, path_rect)
-            
+                    draw_key = (x, y)
+                    if draw_key not in drawn_translucents:
+                        pos_x = x * CELL_SIZE + CELL_SIZE // 3
+                        pos_y = y * CELL_SIZE + CELL_SIZE // 3
+                        win.blit(translucent_surface, (pos_x, pos_y))
+                        drawn_translucents.add(draw_key)
+
             # Draw "1" if holding package
             if agent_type == "multi":
                 if agent.robots[i].holding:
