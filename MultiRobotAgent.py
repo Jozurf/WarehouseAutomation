@@ -36,6 +36,11 @@ class MultiRobotAgent:
         assignments = self.assign_tasks()
 
         for i, robot in enumerate(self.robots):
+            if not assignments[i]:  # No assigned tasks
+                robot.done = True
+                print(f"Robot {i} has no assigned pickups and is marked done.")
+                continue
+
             full_path = []
             current_pos = self.start_pos
 
