@@ -12,6 +12,8 @@ class OneRobotAStarAgent:
         self.path = []
         self.current_path_index = 0
         self.current_path = []
+        self.pickup_path = []
+        self.dropoff_path = []
         
     def set_start_position(self, start_pos):
         self.start_pos = start_pos
@@ -35,6 +37,10 @@ class OneRobotAStarAgent:
             return False
         
         # Combine paths (remove duplicate pickup position)
+        self.pickup_path = to_pickup
+        self.dropoff_path = to_dropoff
+        print("Path to pickup:", self.pickup_path)
+        print("Path to dropoff:", self.dropoff_path)
         self.path = to_pickup + to_dropoff[1:]
         self.current_path = self.path
         self.current_path_index = 0
