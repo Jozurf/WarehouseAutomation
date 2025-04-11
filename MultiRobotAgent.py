@@ -8,14 +8,16 @@ class RobotAgents:
         self.position = start_pos
         self.path = []              # Full path for the robot (excluding its starting position)
         self.done = False           # True when the robot finishes its route
-        self.holding = False        # True when robot has picked up a package
+        self.capacity = random.randint(2, 5)  # Random capacity between 2 and 5
+        self.current_load = 0       # Current load being carried
+        self.holding_packages = []  # List of (position, size) tuples of packages being held
         self.q_agent = QLearningAgent()
         self.q_agent.load('q_learning_weights.json')  # Load pre-trained weights
         self.last_state = None
         self.last_action = None
 
 class MultiRobotAgent:
-    def __init__(self, grid, start_pos, pickups, dropoffs, num_robots):
+    def __init__(self, grid, start_pos, pickups, dropoffs, num_robots, package_sizes):
         self.grid = grid
         self.start_pos = start_pos  # This is the charging station position
         self.pickups = pickups.copy()  # All available pickups
@@ -27,48 +29,76 @@ class MultiRobotAgent:
         self.reservation_table = {}  # Maps robots to their currently assigned pickups
         self.completed_pickups = set()  # Track which pickups have been completed
         self.returning_home = set()  # Track which robots are returning to charging station
+        self.package_sizes = package_sizes  # Maps pickup locations to their sizes
 
-    def assign_initial_pickups(self):
-        """Assign one pickup to each robot initially."""
-        available_pickups = self.pickups.copy()
+    def calculate_package_value(self, package_pos, robot_pos):
+        """Calculate the value of a package based on its size, distance, and nearby packages."""
+        size = self.package_sizes[package_pos]
+        distance = self.manhattan(robot_pos, package_pos)
         
-        for robot in self.robots:
-            if available_pickups:
-                # Find the closest pickup to the robot's start position
-                closest_pickup = min(available_pickups, 
-                                   key=lambda p: self.manhattan(robot.position, p))
-                self.reservation_table[robot] = closest_pickup
-                available_pickups.remove(closest_pickup)
-                
-                # Plan path from start to pickup to nearest dropoff
-                dropoff = self.find_nearest(closest_pickup, self.dropoffs)
-                agent = OneRobotAStarAgent(self.grid, robot.position, closest_pickup, dropoff)
-                if agent.plan_path():
-                    robot.path = [agent.pickup_path[1:], agent.dropoff_path[1:]]
-                else:
-                    print(f"Failed to plan initial path for robot")
-                    robot.done = True
+        # Base value: size/distance ratio
+        value = size / (distance + 1)  # +1 to avoid division by zero
+        
+        # Check for nearby packages that could fit
+        nearby_bonus = 0
+        for other_pickup in self.pickups:
+            if other_pickup != package_pos and other_pickup not in self.completed_pickups:
+                other_distance = self.manhattan(package_pos, other_pickup)
+                if other_distance <= 3:  # Only consider packages within 3 steps
+                    nearby_bonus += 0.5  # Bonus for each nearby package
+                    
+        return value + nearby_bonus
 
-    def assign_next_pickup(self, robot):
-        """Assign the nearest available pickup to the robot after completing a task."""
-        # Get all pickups that aren't completed or currently assigned
-        available_pickups = [p for p in self.pickups 
-                           if p not in self.completed_pickups and 
-                           p not in self.reservation_table.values()]
+    def get_reserved_pickups(self):
+        """Get all pickups that are currently reserved by any robot."""
+        reserved = set()
+        for pickups in self.reservation_table.values():
+            if isinstance(pickups, list):
+                reserved.update(pickups)
+            else:
+                reserved.add(pickups)
+        return reserved
+
+    def find_additional_pickups(self, robot, current_pickup, dropoff):
+        """Find additional pickups that could be made before going to dropoff."""
+        additional_pickups = []
+        remaining_capacity = robot.capacity - robot.current_load - self.package_sizes[current_pickup]
+        current_pos = current_pickup
         
-        if available_pickups:
-            # Find the closest pickup to robot's current position
-            closest_pickup = min(available_pickups, 
-                               key=lambda p: self.manhattan(robot.position, p))
-            self.reservation_table[robot] = closest_pickup
+        # Get all reserved pickups
+        reserved_pickups = self.get_reserved_pickups()
+        
+        # Look for packages that could be picked up efficiently
+        while remaining_capacity > 0:
+            best_next_pickup = None
+            best_value = -1
             
-            # Plan path to new pickup and nearest dropoff
-            dropoff = self.find_nearest(closest_pickup, self.dropoffs)
-            agent = OneRobotAStarAgent(self.grid, robot.position, closest_pickup, dropoff)
-            if agent.plan_path():
-                robot.path = [agent.pickup_path[1:], agent.dropoff_path[1:]]
-                return True
-        return False
+            for pickup in self.pickups:
+                if pickup != current_pickup and pickup not in self.completed_pickups \
+                   and pickup not in reserved_pickups \
+                   and pickup not in additional_pickups:
+                    
+                    # Check if package would fit
+                    if self.package_sizes[pickup] <= remaining_capacity:
+                        # Calculate detour cost: extra distance compared to direct path
+                        direct_dist = self.manhattan(current_pos, dropoff)
+                        detour_dist = self.manhattan(current_pos, pickup) + self.manhattan(pickup, dropoff)
+                        detour_cost = detour_dist - direct_dist
+                        
+                        if detour_cost <= 5:  # Only consider small detours
+                            value = self.package_sizes[pickup] / (detour_cost + 1)
+                            if value > best_value:
+                                best_value = value
+                                best_next_pickup = pickup
+            
+            if best_next_pickup:
+                additional_pickups.append(best_next_pickup)
+                remaining_capacity -= self.package_sizes[best_next_pickup]
+                current_pos = best_next_pickup
+            else:
+                break
+                            
+        return additional_pickups
 
     def update_robot_segments(self, robot, next_pos):
         """Clean up and update pickup, dropoff, and return home segments based on the move."""
@@ -78,15 +108,21 @@ class MultiRobotAgent:
             
             # If we just finished a segment, check if we picked up or dropped off
             x, y = next_pos
-            if robot.holding and (x, y) in self.dropoffs:
-                robot.holding = False
-                print("Robot dropped off the package!")
+            if robot.holding_packages and (x, y) in self.dropoffs:
+                # Drop off all packages
+                num_packages = len(robot.holding_packages)  # Store count before clearing
+                for package_pos, package_size in robot.holding_packages:
+                    self.completed_pickups.add(package_pos)
+                robot.holding_packages = []
+                robot.current_load = 0
+                print(f"Robot dropped off {num_packages} packages!")
+                
                 # Clear the path to allow getting a new pickup or return home
                 robot.path = []
-                # Remove the pickup from the reservation table since it's completed
+                
+                # Remove the pickups from the reservation table
                 if robot in self.reservation_table:
-                    pickup = self.reservation_table[robot]
-                    self.completed_pickups.add(pickup)
+                    pickups = self.reservation_table[robot]
                     del self.reservation_table[robot]
                     print(f"Completed pickups: {len(self.completed_pickups)}/{self.total_pickups}")
                     
@@ -95,7 +131,7 @@ class MultiRobotAgent:
                         self.returning_home.add(robot)
                         agent = OneRobotAStarAgent(self.grid, robot.position, self.start_pos, self.start_pos)
                         if agent.plan_path():
-                            robot.path = [agent.pickup_path[1:]]  # Only need path to charging station
+                            robot.path = [agent.pickup_path[1:]]
                     else:
                         # Try to assign a new pickup
                         if not self.assign_next_pickup(robot):
@@ -103,24 +139,145 @@ class MultiRobotAgent:
                             self.returning_home.add(robot)
                             agent = OneRobotAStarAgent(self.grid, robot.position, self.start_pos, self.start_pos)
                             if agent.plan_path():
-                                robot.path = [agent.pickup_path[1:]]  # Only need path to charging station
+                                robot.path = [agent.pickup_path[1:]]
                             
-            elif not robot.holding and (x, y) == self.start_pos and robot in self.returning_home:
+            elif not robot.holding_packages and (x, y) == self.start_pos and robot in self.returning_home:
                 # Robot has returned to charging station
                 robot.done = True
                 print("Robot returned to charging station!")
                 
-            elif not robot.holding and self.grid[x][y] == 4:  # Pickup
-                robot.holding = True
-                print("Robot picked up the package!")
-                # Mark the pickup as completed
-                if robot in self.reservation_table:
-                    pickup = self.reservation_table[robot]
-                    if pickup in self.pickups:
-                        self.pickups.remove(pickup)
-                    print(f"Completed pickups: {len(self.completed_pickups)}/{self.total_pickups}")
+            elif self.grid[x][y] == 4:  # Pickup
+                if (x, y) in self.package_sizes and robot in self.reservation_table:
+                    pickups = self.reservation_table[robot]
+                    if (x, y) in pickups:  # Only pick up if it's in our planned pickups
+                        package_size = self.package_sizes[(x, y)]
+                        if package_size <= (robot.capacity - robot.current_load):
+                            robot.holding_packages.append(((x, y), package_size))
+                            robot.current_load += package_size
+                            print(f"Robot picked up package of size {package_size}! Current load: {robot.current_load}/{robot.capacity}")
+                            # Mark the pickup as in progress
+                            if (x, y) in self.pickups:
+                                self.pickups.remove((x, y))
         
         robot.position = next_pos
+
+    def assign_initial_pickups(self):
+        """Assign initial pickups to robots based on value and capacity."""
+        available_pickups = self.pickups.copy()
+        
+        for robot in self.robots:
+            if available_pickups:
+                # Calculate value for all pickups that fit
+                pickup_values = []
+                for pickup in available_pickups:
+                    if self.package_sizes[pickup] <= robot.capacity:
+                        value = self.calculate_package_value(pickup, robot.position)
+                        pickup_values.append((pickup, value))
+                
+                if pickup_values:
+                    # Sort by value and take the best one
+                    pickup_values.sort(key=lambda x: x[1], reverse=True)
+                    best_pickup = pickup_values[0][0]
+                    
+                    # Find nearest dropoff
+                    dropoff = self.find_nearest(best_pickup, self.dropoffs)
+                    
+                    # Plan initial path to best pickup
+                    agent = OneRobotAStarAgent(self.grid, robot.position, best_pickup, dropoff)
+                    if agent.plan_path():
+                        # Look for additional pickups
+                        additional_pickups = self.find_additional_pickups(robot, best_pickup, dropoff)
+                        
+                        # Build complete path including all pickups
+                        complete_path = []
+                        current_pos = robot.position
+                        all_pickups = [best_pickup] + additional_pickups
+                        
+                        # Path to first pickup
+                        agent = OneRobotAStarAgent(self.grid, current_pos, best_pickup, dropoff)
+                        if agent.plan_path():
+                            complete_path.append(agent.pickup_path[1:])
+                            current_pos = best_pickup
+                            
+                            # Paths to additional pickups
+                            for pickup in additional_pickups:
+                                agent = OneRobotAStarAgent(self.grid, current_pos, pickup, dropoff)
+                                if agent.plan_path():
+                                    complete_path.append(agent.pickup_path[1:])
+                                    current_pos = pickup
+                            
+                            # Final path to dropoff
+                            agent = OneRobotAStarAgent(self.grid, current_pos, dropoff, dropoff)
+                            if agent.plan_path():
+                                complete_path.append(agent.pickup_path[1:])
+                                
+                                robot.path = complete_path
+                                self.reservation_table[robot] = all_pickups
+                                
+                                # Remove assigned pickups from available ones
+                                for pickup in all_pickups:
+                                    if pickup in available_pickups:
+                                        available_pickups.remove(pickup)
+                    else:
+                        print(f"Failed to plan initial path for robot")
+                        robot.done = True
+
+    def assign_next_pickup(self, robot):
+        """Assign next pickups to robot after completing a delivery."""
+        reserved_pickups = self.get_reserved_pickups()
+        available_pickups = [p for p in self.pickups 
+                           if p not in self.completed_pickups and 
+                           p not in reserved_pickups]
+        
+        if available_pickups:
+            # Calculate value for all pickups that would fit
+            pickup_values = []
+            for pickup in available_pickups:
+                if self.package_sizes[pickup] <= robot.capacity:
+                    value = self.calculate_package_value(pickup, robot.position)
+                    pickup_values.append((pickup, value))
+            
+            if pickup_values:
+                # Sort by value and take the best one
+                pickup_values.sort(key=lambda x: x[1], reverse=True)
+                best_pickup = pickup_values[0][0]
+                
+                # Find nearest dropoff
+                dropoff = self.find_nearest(best_pickup, self.dropoffs)
+                
+                # Plan path to best pickup
+                agent = OneRobotAStarAgent(self.grid, robot.position, best_pickup, dropoff)
+                if agent.plan_path():
+                    # Look for additional pickups
+                    additional_pickups = self.find_additional_pickups(robot, best_pickup, dropoff)
+                    
+                    # Build complete path including all pickups
+                    complete_path = []
+                    current_pos = robot.position
+                    all_pickups = [best_pickup] + additional_pickups
+                    
+                    # Path to first pickup
+                    agent = OneRobotAStarAgent(self.grid, current_pos, best_pickup, dropoff)
+                    if agent.plan_path():
+                        complete_path.append(agent.pickup_path[1:])
+                        current_pos = best_pickup
+                        
+                        # Paths to additional pickups
+                        for pickup in additional_pickups:
+                            agent = OneRobotAStarAgent(self.grid, current_pos, pickup, dropoff)
+                            if agent.plan_path():
+                                complete_path.append(agent.pickup_path[1:])
+                                current_pos = pickup
+                        
+                        # Final path to dropoff
+                        agent = OneRobotAStarAgent(self.grid, current_pos, dropoff, dropoff)
+                        if agent.plan_path():
+                            complete_path.append(agent.pickup_path[1:])
+                            
+                            robot.path = complete_path
+                            self.reservation_table[robot] = all_pickups
+                            return True
+        return False
 
     def get_next_moves(self):
         """Determine and update the next move for each robot."""
@@ -284,9 +441,9 @@ class MultiRobotAgent:
                         heapq.heappush(open_set, (f_score, tentative_g, neighbor))
         return []  # Return empty if no path is found
 
-    def find_nearest(self, current_pos, options):
-        """Return the option that is closest to the current position (using Manhattan distance)."""
-        return min(options, key=lambda pos: self.manhattan(current_pos, pos))
+    def find_nearest(self, pos, targets):
+        """Find the nearest target position to the given position."""
+        return min(targets, key=lambda p: self.manhattan(pos, p))
     
     def all_tasks_done(self):
         """Check if all pickups have been completed and all robots have returned to charging station."""
@@ -294,5 +451,6 @@ class MultiRobotAgent:
         all_robots_home = all(robot.done for robot in self.robots)
         return all_pickups_done and all_robots_home
     
-    def manhattan(self, a, b):
-        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    def manhattan(self, pos1, pos2):
+        """Calculate Manhattan distance between two points."""
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])

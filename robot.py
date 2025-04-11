@@ -12,6 +12,8 @@ class Robot:
         self.isHoldingPackage = False
         self.color = self.getColor()
         self.path = [(x, y)]  # Track the path for evaluation
+        self.capacity = 1  # Default capacity, will be set randomly in warehouse.py
+        self.current_load = 0  # Current load being carried
         self.q_agent = QLearningAgent()
         
         # Try to load weights from q_learning_weights.json
