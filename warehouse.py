@@ -203,8 +203,8 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
     if agent_type == 'multi':
         agent = MultiRobotAgent(grid, robot_pos, pickup_locations, dropoff_locations, num_robots)
-        agent.plan_paths()
-        print("Planned paths for all robots.")
+        agent.assign_initial_pickups()
+        print("Assigned initial pickups to all robots.")
         robots = [Robot(robot_pos[1], robot_pos[0], grid) for _ in range(num_robots)]
     else:
         agent = MultiPickupAgent(grid, robot_pos, pickup_locations, dropoff_locations)

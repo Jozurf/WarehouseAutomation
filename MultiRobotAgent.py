@@ -17,74 +17,117 @@ class RobotAgents:
 class MultiRobotAgent:
     def __init__(self, grid, start_pos, pickups, dropoffs, num_robots):
         self.grid = grid
-        self.start_pos = start_pos
-        self.pickups = pickups
-        self.dropoffs = dropoffs  # Dropoff points (reusable)
+        self.start_pos = start_pos  # This is the charging station position
+        self.pickups = pickups.copy()  # All available pickups
+        self.total_pickups = len(pickups)  # Total number of pickups to complete
+        self.dropoffs = dropoffs
         self.num_robots = num_robots
         self.robots = [RobotAgents(start_pos) for _ in range(num_robots)]
         self.paths_planned = False
-        self.reservation_table = {}  # Not used yet
-        self.edge_table = {}         # Not used yet
+        self.reservation_table = {}  # Maps robots to their currently assigned pickups
+        self.completed_pickups = set()  # Track which pickups have been completed
+        self.returning_home = set()  # Track which robots are returning to charging station
 
-    def assign_tasks(self):
-        """Assign pickup tasks to robots in a round-robin fashion."""
-        tasks = copy.deepcopy(self.pickups)
-        assignments = [[] for _ in range(self.num_robots)]
-        for i, task in enumerate(tasks):
-            assignments[i % self.num_robots].append(task)
-        return assignments
-
-    def plan_paths(self):
-        """Plan full paths for all robots including pickups, dropoffs, and return home."""
-        assignments = self.assign_tasks()
-
-        for i, robot in enumerate(self.robots):
-            if not assignments[i]:  # No assigned tasks
-                robot.done = True
-                print(f"Robot {i} has no assigned pickups and is marked done.")
-                continue
-
-            full_path = []
-            current_pos = self.start_pos
-
-            for pickup in assignments[i]:
-                dropoff = self.find_nearest(pickup, self.dropoffs)
-                agent = OneRobotAStarAgent(self.grid, current_pos, pickup, dropoff)
-                if not agent.plan_path():
-                    print(f"[Error] Robot {i} failed on task {pickup} -> {dropoff}")
-                    robot.done = True
-                    break
-
-                # Append segment paths while excluding duplicate starting positions.
-                full_path.append(agent.pickup_path[1:])
-                full_path.append(agent.dropoff_path[1:])
-                print(f"Robot {i} assigned path: {agent.pickup_path[1:]} -> {agent.dropoff_path[1:]}")
-                current_pos = dropoff
-
-            if not robot.done:
-                # Plan path for returning home.
-                return_agent = OneRobotAStarAgent(self.grid, current_pos, self.start_pos, self.start_pos)
-                if return_agent.plan_path():
-                    full_path.append(return_agent.pickup_path[1:])
+    def assign_initial_pickups(self):
+        """Assign one pickup to each robot initially."""
+        available_pickups = self.pickups.copy()
+        
+        for robot in self.robots:
+            if available_pickups:
+                # Find the closest pickup to the robot's start position
+                closest_pickup = min(available_pickups, 
+                                   key=lambda p: self.manhattan(robot.position, p))
+                self.reservation_table[robot] = closest_pickup
+                available_pickups.remove(closest_pickup)
+                
+                # Plan path from start to pickup to nearest dropoff
+                dropoff = self.find_nearest(closest_pickup, self.dropoffs)
+                agent = OneRobotAStarAgent(self.grid, robot.position, closest_pickup, dropoff)
+                if agent.plan_path():
+                    robot.path = [agent.pickup_path[1:], agent.dropoff_path[1:]]
                 else:
-                    print(f"[Error] Robot {i} failed to plan return home.")
+                    print(f"Failed to plan initial path for robot")
                     robot.done = True
 
-            # Assign planned paths to the robot.
-            robot.path = full_path
+    def assign_next_pickup(self, robot):
+        """Assign the nearest available pickup to the robot after completing a task."""
+        # Get all pickups that aren't completed or currently assigned
+        available_pickups = [p for p in self.pickups 
+                           if p not in self.completed_pickups and 
+                           p not in self.reservation_table.values()]
+        
+        if available_pickups:
+            # Find the closest pickup to robot's current position
+            closest_pickup = min(available_pickups, 
+                               key=lambda p: self.manhattan(robot.position, p))
+            self.reservation_table[robot] = closest_pickup
+            
+            # Plan path to new pickup and nearest dropoff
+            dropoff = self.find_nearest(closest_pickup, self.dropoffs)
+            agent = OneRobotAStarAgent(self.grid, robot.position, closest_pickup, dropoff)
+            if agent.plan_path():
+                robot.path = [agent.pickup_path[1:], agent.dropoff_path[1:]]
+                return True
+        return False
 
-            # Debug printouts.
-            print(f"Robot {i} assigned full path: {robot.path}")
-            print("Robot starting at:", robot.position)
-
-        self.paths_planned = True
+    def update_robot_segments(self, robot, next_pos):
+        """Clean up and update pickup, dropoff, and return home segments based on the move."""
+        if robot.path and robot.path[0] == []:
+            # Remove empty segment
+            robot.path.pop(0)
+            
+            # If we just finished a segment, check if we picked up or dropped off
+            x, y = next_pos
+            if robot.holding and (x, y) in self.dropoffs:
+                robot.holding = False
+                print("Robot dropped off the package!")
+                # Clear the path to allow getting a new pickup or return home
+                robot.path = []
+                # Remove the pickup from the reservation table since it's completed
+                if robot in self.reservation_table:
+                    pickup = self.reservation_table[robot]
+                    self.completed_pickups.add(pickup)
+                    del self.reservation_table[robot]
+                    print(f"Completed pickups: {len(self.completed_pickups)}/{self.total_pickups}")
+                    
+                    # If all pickups are completed, send robot home
+                    if len(self.completed_pickups) == self.total_pickups:
+                        self.returning_home.add(robot)
+                        agent = OneRobotAStarAgent(self.grid, robot.position, self.start_pos, self.start_pos)
+                        if agent.plan_path():
+                            robot.path = [agent.pickup_path[1:]]  # Only need path to charging station
+                    else:
+                        # Try to assign a new pickup
+                        if not self.assign_next_pickup(robot):
+                            # If no more pickups available, return to charging station
+                            self.returning_home.add(robot)
+                            agent = OneRobotAStarAgent(self.grid, robot.position, self.start_pos, self.start_pos)
+                            if agent.plan_path():
+                                robot.path = [agent.pickup_path[1:]]  # Only need path to charging station
+                            
+            elif not robot.holding and (x, y) == self.start_pos and robot in self.returning_home:
+                # Robot has returned to charging station
+                robot.done = True
+                print("Robot returned to charging station!")
+                
+            elif not robot.holding and self.grid[x][y] == 4:  # Pickup
+                robot.holding = True
+                print("Robot picked up the package!")
+                # Mark the pickup as completed
+                if robot in self.reservation_table:
+                    pickup = self.reservation_table[robot]
+                    if pickup in self.pickups:
+                        self.pickups.remove(pickup)
+                    print(f"Completed pickups: {len(self.completed_pickups)}/{self.total_pickups}")
+        
+        robot.position = next_pos
 
     def get_next_moves(self):
         """Determine and update the next move for each robot."""
         moves = []
         for robot in self.robots:
             if robot.done or not robot.path:
-                moves.append(None)
+                moves.append(robot.position)
                 continue
 
             # Get the next position from A* path
@@ -141,7 +184,6 @@ class MultiRobotAgent:
                     next_pos = robot.path[0].pop(0)
                 else:
                     # Robot deviated from path, get back on track
-                    print("Robot is off track:", robot.position, "expected next:", next_a_star_pos)
                     self.get_back_on_track(robot)
                     next_pos = robot.path[0].pop(0) if robot.path[0] else robot.position
 
@@ -181,26 +223,6 @@ class MultiRobotAgent:
             if not robot.done and robot.position == (x, y):
                 return True
         return False
-
-    def update_robot_segments(self, robot, next_pos):
-        """Clean up and update pickup, dropoff, and return home segments based on the move."""
-        if robot.path[0] == []:
-            # check 4 -> pickup, 5 -> dropoff
-            x, y = next_pos
-            if robot.holding and self.grid[x][y] == 5:
-                robot.holding = False
-                print("Robot dropped off the package!")
-            elif not robot.holding and self.grid[x][y] == 4:
-                robot.holding = True
-                print("Robot picked up the package!")
-            robot.path.pop(0)  # Remove empty segments
-        
-        robot.position = next_pos
-        
-        if not robot.path:
-            robot.done = True
-            # Save Q-learning weights when robot completes its task
-            robot.q_agent.save('q_learning_weights.json')
 
     def is_adjacent(self, pos, target):
         """Check if target is one block away from the current position."""
@@ -267,8 +289,10 @@ class MultiRobotAgent:
         return min(options, key=lambda pos: self.manhattan(current_pos, pos))
     
     def all_tasks_done(self):
-        """Check if all robots have completed their tasks."""
-        return all(robot.done for robot in self.robots)
+        """Check if all pickups have been completed and all robots have returned to charging station."""
+        all_pickups_done = len(self.completed_pickups) == self.total_pickups
+        all_robots_home = all(robot.done for robot in self.robots)
+        return all_pickups_done and all_robots_home
     
     def manhattan(self, a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
