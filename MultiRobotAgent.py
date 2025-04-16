@@ -283,7 +283,21 @@ class MultiRobotAgent:
         """Determine and update the next move for each robot."""
         moves = []
         for robot in self.robots:
-            if robot.done or not robot.path:
+            if robot.done:
+                moves.append(robot.position)
+                continue
+
+            # If robot has no path, try to assign a new pickup
+            if not robot.path:
+                if not self.assign_next_pickup(robot):
+                    # If no pickups available and robot has no packages, send it home
+                    if not robot.holding_packages:
+                        self.returning_home.add(robot)
+                        agent = OneRobotAStarAgent(self.grid, robot.position, self.start_pos, self.start_pos)
+                        if agent.plan_path():
+                            robot.path = [agent.pickup_path[1:]]
+                        else:
+                            robot.done = True
                 moves.append(robot.position)
                 continue
 

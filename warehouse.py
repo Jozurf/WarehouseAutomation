@@ -280,18 +280,15 @@ def run_simulation(agent_type, num_pickups, num_dropoffs, num_robots):
 
         status_text = f"Mode: {agent_type.upper()} | Robots: {len(robots)}"
         status_surface = font.render(status_text, True, BLACK)
-        win.blit(status_surface, (10, HEIGHT - 40))
+        win.blit(status_surface, (10, HEIGHT - 30))
 
-        instr_surface = font.render("Press R to regenerate grid", True, BLACK)
-        win.blit(instr_surface, (WIDTH - 300, HEIGHT - 40))
-
-        pygame.display.update()
+        pygame.display.flip()
 
         if agent_type == 'multi' and agent.all_tasks_done():
-            pygame.time.delay(2000)
+            print("All tasks completed!")
             return False
-        elif agent_type != 'multi' and agent.has_completed_path():
-            pygame.time.delay(2000)
+        elif agent_type == 'single' and agent.has_completed_path():
+            print("Path completed!")
             return False
 
     return False
