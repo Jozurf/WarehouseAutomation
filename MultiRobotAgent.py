@@ -4,11 +4,11 @@ from q_learning import QLearningAgent
 
 class RobotAgents:
     """Encapsulates state and path segments for each robot."""
-    def __init__(self, start_pos):
+    def __init__(self, start_pos, package_sizes):
         self.position = start_pos
         self.path = []              # Full path for the robot (excluding its starting position)
         self.done = False           # True when the robot finishes its route
-        self.capacity = random.randint(2, 5)  # Random capacity between 2 and 5
+        self.capacity = random.randint(min(package_sizes.values()) if package_sizes else 2, 5)  # Random capacity between 2 and 5
         self.current_load = 0       # Current load being carried
         self.holding_packages = []  # List of (position, size) tuples of packages being held
         self.q_agent = QLearningAgent()
@@ -18,18 +18,31 @@ class RobotAgents:
 
 class MultiRobotAgent:
     def __init__(self, grid, start_pos, pickups, dropoffs, num_robots, package_sizes):
+        print("Package sizes:", package_sizes)
         self.grid = grid
         self.start_pos = start_pos  # This is the charging station position
         self.pickups = pickups.copy()  # All available pickups
         self.total_pickups = len(pickups)  # Total number of pickups to complete
         self.dropoffs = dropoffs
         self.num_robots = num_robots
-        self.robots = [RobotAgents(start_pos) for _ in range(num_robots)]
+        self.robots = [RobotAgents(start_pos, package_sizes) for _ in range(num_robots)]
         self.paths_planned = False
         self.reservation_table = {}  # Maps robots to their currently assigned pickups
         self.completed_pickups = set()  # Track which pickups have been completed
         self.returning_home = set()  # Track which robots are returning to charging station
         self.package_sizes = package_sizes  # Maps pickup locations to their sizes
+        self.action_dir_map = {
+            (0, -1): "UP",
+            (0, 1): "DOWN",
+            (-1, 0): "LEFT",
+            (1, 0): "RIGHT",
+        }
+        self.dir_alignment = {
+            "UP":     {"UP": 0.1, "LEFT": 0.05, "RIGHT": 0.05, "DOWN": -0.05},
+            "DOWN":   {"DOWN": 0.1, "LEFT": 0.05, "RIGHT": 0.05, "UP": -0.05},
+            "LEFT":   {"LEFT": 0.1, "UP": 0.05, "DOWN": 0.05, "RIGHT": -0.05},
+            "RIGHT":  {"RIGHT": 0.1, "UP": 0.05, "DOWN": 0.05, "LEFT": -0.05},
+        }
 
     def calculate_package_value(self, package_pos, robot_pos):
         """Calculate the value of a package based on its size, distance, and nearby packages."""
@@ -144,6 +157,7 @@ class MultiRobotAgent:
             elif not robot.holding_packages and (x, y) == self.start_pos and robot in self.returning_home:
                 # Robot has returned to charging station
                 robot.done = True
+                robot.q_agent.save('q_learning_weights.json')  # Save weights after returning home
                 print("Robot returned to charging station!")
                 
             elif self.grid[x][y] == 4:  # Pickup
@@ -166,7 +180,10 @@ class MultiRobotAgent:
         available_pickups = self.pickups.copy()
         
         for robot in self.robots:
-            if available_pickups:
+            if not available_pickups:
+                robot.done = True
+                continue
+            else:
                 # Calculate value for all pickups that fit
                 pickup_values = []
                 for pickup in available_pickups:
@@ -219,7 +236,10 @@ class MultiRobotAgent:
                                     if pickup in available_pickups:
                                         available_pickups.remove(pickup)
                     else:
-                        print(f"Failed to plan initial path for robot")
+                        if not pickup_values:
+                            print(f"No available packages fit robot capacity {robot.capacity}. Marking robot as done.")
+                        else:
+                            print(f"Failed to plan initial path for robot")
                         robot.done = True
 
     def assign_next_pickup(self, robot):
@@ -337,9 +357,13 @@ class MultiRobotAgent:
                     # Positive reward for successful movement
                     reward += 0.1
                     
-                    # Extra reward for moving closer to the A* path target
-                    if self.manhattan((new_x, new_y), next_a_star_pos) < self.manhattan(robot.position, next_a_star_pos):
-                        reward += 0.2
+                    # Extra reward for moving closer to waypoint
+                    curr_state_list = list(current_state)
+                    dir_to_waypoint = curr_state_list[-1]
+                    if dir_to_waypoint:
+                        action_dir = self.action_dir_map.get((dx, dy), None)
+                        if action_dir in self.dir_alignment.get(dir_to_waypoint, {}):
+                            reward += self.dir_alignment[dir_to_waypoint][action_dir]
                     
                     # Update Q-values
                     if robot.last_state is not None and robot.last_action is not None:
