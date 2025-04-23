@@ -2,6 +2,7 @@ import numpy as np
 import json
 import os
 import random
+import ast
 
 class QLearningAgent:
     def __init__(self, learning_rate=0.1, discount_factor=0.95, epsilon=0.1):
@@ -28,14 +29,29 @@ class QLearningAgent:
                 state.append(1 if grid[new_y][new_x] in [1, 2] else 0)
             else:
                 state.append(1)  # Treat out of bounds as obstacle
-                
+        
+        # add direction to next waypoint
+        if hasattr(robot, 'waypoint'): # robot class
+            next_waypoint = robot.waypoint[0][-1] if robot.waypoint and robot.waypoint[0] else None
+            if next_waypoint:
+                dir_to_waypoint = self.get_direction(x, y, next_waypoint[0], next_waypoint[1])
+                state.append(dir_to_waypoint)
+            else:
+                state.append(None)
+        else: # robot agent class
+            next_waypoint = robot.path[0][-1] if robot.path and robot.path[0] else None
+
+            if next_waypoint:
+                dir_to_waypoint = self.get_direction(x, y, next_waypoint[0], next_waypoint[1])
+                state.append(dir_to_waypoint)
+            else:
+                state.append(None)
         return tuple(state)
     
     def get_action(self, state, valid_moves):
         """Choose an action using epsilon-greedy policy"""
         if not valid_moves:
             return None
-            
         if state not in self.q_table:
             self.q_table[state] = {tuple(move): 0.0 for move in [(0, 1), (1, 0), (0, -1), (-1, 0)]}
             
@@ -72,7 +88,7 @@ class QLearningAgent:
                 str(action): value 
                 for action, value in actions.items()
             }
-        
+        print(f"Saving Q-table to {filename} with size {len(serializable_q_table)}")
         with open(filename, 'w') as f:
             json.dump(serializable_q_table, f)
     
@@ -87,11 +103,20 @@ class QLearningAgent:
         # Convert string keys back to tuples
         self.q_table = {}
         for state_str, actions in serialized_q_table.items():
-            # Convert state string to tuple
-            state = tuple(int(x) for x in state_str.strip('()').split(','))
-            # Convert action strings to tuples
-            self.q_table[state] = {
-                tuple(int(x) for x in action.strip('()').split(',')): value
-                for action, value in actions.items()
-            }
-        return True 
+            state = ast.literal_eval(state_str)
+            self.q_table[state] = {}
+            for action_str, value in actions.items():
+                action = ast.literal_eval(action_str)
+                self.q_table[state][action] = value
+        return True
+    
+    def get_direction(self, x1, y1, x2, y2):
+        dx = x2 - x1
+        dy = y2 - y1
+
+        if abs(dx) > abs(dy):
+            return 'RIGHT' if dx > 0 else 'LEFT'
+        elif dy != 0:
+            return 'DOWN' if dy > 0 else 'UP'
+        else:
+            return None  # same point

@@ -5,7 +5,7 @@ import random
 from robot import Robot
 import numpy as np
 
-def generate_small_grid(size=8):
+def generate_small_grid(size=10):
     """Generate a smaller grid for faster training"""
     grid = [[0 for _ in range(size)] for _ in range(size)]
     
@@ -29,7 +29,7 @@ def find_random_valid_position(grid):
         if grid[y][x] == 0:  # Empty cell
             return x, y
 
-def train_q_learning(episodes=10000, steps_per_episode=50, num_robots=3, grid_size=8):
+def train_q_learning(episodes=10000, steps_per_episode=100, num_robots=3, grid_size=8):
     """Train multiple Q-learning agents for collision avoidance"""
     # Training metrics
     episode_rewards = []
@@ -48,6 +48,11 @@ def train_q_learning(episodes=10000, steps_per_episode=50, num_robots=3, grid_si
             robot.q_agent.epsilon = max(0.01, 0.5 - episode / episodes)
             robots.append(robot)
         
+        # create a goal for each robot to go to each episode once reached will be replaced
+        for robot in robots:
+            goal_x, goal_y = find_random_valid_position(grid)
+            robot.waypoint = [[(goal_x, goal_y)]]
+        
         episode_reward = 0
         collisions = 0
         
@@ -63,7 +68,10 @@ def train_q_learning(episodes=10000, steps_per_episode=50, num_robots=3, grid_si
                 robot.grid = temp_grid
                 old_pos = (robot.x, robot.y)
                 robot.move()
-                
+
+                if not robot.waypoint:
+                    new_waypoint = find_random_valid_position(grid)
+                    robot.waypoint = [[new_waypoint]]
                 # Check for collisions
                 if (robot.x, robot.y) == old_pos:  # Robot couldn't move due to collision
                     collisions += 1
