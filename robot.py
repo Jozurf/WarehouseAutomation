@@ -1,10 +1,8 @@
-import random
 from q_learning import QLearningAgent
 import os
 
+# Simplified Robot class to be used for Q-learning
 class Robot:
-    _weight_file_index = 0  # Class variable to track which weight file to use
-    
     def __init__(self, x, y, grid, color=(255, 255, 0)):
         self.x = x
         self.y = y
@@ -73,7 +71,7 @@ class Robot:
             # Positive reward for successful movement
             reward += 0.1
 
-            # positive reward for heading towards waypoint if there is one
+            # Positive reward for heading towards waypoint if there is one
             curr_state_list = list(current_state)
             dir_to_waypoint = curr_state_list[-1]
             if dir_to_waypoint:
